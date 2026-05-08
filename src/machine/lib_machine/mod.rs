@@ -1,23 +1,28 @@
+use std::cell::Cell;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
 use crate::atom_table;
+use crate::forms::ListingSource;
 use crate::heap_iter::{stackful_post_order_iter, NonListElider};
+use crate::machine::loader::{Loader, PrebuiltBootstrappingLoadState};
 use crate::machine::heap::AllocError;
 use crate::machine::machine_indices::VarKey;
 use crate::machine::mock_wam::CompositeOpDir;
+use crate::machine::term_stream::PrebuiltTermStream;
 use crate::machine::{
     ArenaHeaderTag, Fixnum, Number, BREAK_FROM_DISPATCH_LOOP_LOC, LIB_QUERY_SUCCESS,
 };
 use crate::offset_table::*;
-use crate::parser::ast::{Var, VarPtr};
+use crate::parser::ast::{Literal as ParseLiteral, Term as ParseTerm, Var, VarPtr};
 use crate::parser::parser::{Parser, Tokens};
 use crate::read::{write_term_to_heap, TermWriteResult};
 use crate::types::UntypedArenaPtr;
 
 use dashu::{Integer, Rational};
 use indexmap::IndexMap;
+use ordered_float::OrderedFloat;
 
 use super::{streams::Stream, Atom, AtomCell, HeapCellValue, HeapCellValueTag, Machine};
 
@@ -553,6 +558,95 @@ impl Machine {
         ));
 
         self.run_module_predicate(atom!("loader"), (atom!("consult_stream"), 2));
+    }
+
+    fn public_term_to_internal_term(&mut self, term: Term) -> Result<ParseTerm, String> {
+        match term {
+            Term::Integer(value) => {
+                if let Ok(fixnum) = Fixnum::build_with_checked(&value) {
+                    Ok(ParseTerm::Literal(Cell::default(), ParseLiteral::Fixnum(fixnum)))
+                } else {
+                    Ok(ParseTerm::Literal(
+                        Cell::default(),
+                        ParseLiteral::Integer(arena_alloc!(value, &mut self.machine_st.arena)),
+                    ))
+                }
+            }
+            Term::Rational(value) => Ok(ParseTerm::Literal(
+                Cell::default(),
+                ParseLiteral::Rational(arena_alloc!(value, &mut self.machine_st.arena)),
+            )),
+            Term::Float(value) => Ok(ParseTerm::Literal(
+                Cell::default(),
+                ParseLiteral::F64(
+                    float_alloc!(value, &mut self.machine_st.arena),
+                    OrderedFloat(value),
+                ),
+            )),
+            Term::Atom(value) => Ok(ParseTerm::Literal(
+                Cell::default(),
+                ParseLiteral::Atom(atom_table::AtomTable::build_with(
+                    &self.machine_st.atom_tbl,
+                    value.as_str(),
+                )),
+            )),
+            Term::String(value) => Ok(ParseTerm::CompleteString(Cell::default(), Rc::new(value))),
+            Term::List(value) => {
+                let mut tail = ParseTerm::Literal(
+                    Cell::default(),
+                    ParseLiteral::Atom(atom!("[]")),
+                );
+
+                for head in value.into_iter().rev() {
+                    tail = ParseTerm::Cons(
+                        Cell::default(),
+                        Box::new(self.public_term_to_internal_term(head)?),
+                        Box::new(tail),
+                    );
+                }
+
+                Ok(tail)
+            }
+            Term::Compound(name, args) => {
+                let internal_args = args
+                    .into_iter()
+                    .map(|arg| self.public_term_to_internal_term(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ParseTerm::Clause(
+                    Cell::default(),
+                    atom_table::AtomTable::build_with(&self.machine_st.atom_tbl, name.as_str()),
+                    internal_args,
+                ))
+            }
+            Term::Var(value) => Ok(ParseTerm::Var(Cell::default(), VarPtr::from(value))),
+        }
+    }
+
+    /// Loads a sequence of pre-built terms directly into the machine.
+    ///
+    /// This bypasses source parsing and is intended for loaders that already
+    /// have structured terms available on the Rust side.
+    pub fn load_terms(&mut self, program: impl IntoIterator<Item = Term>) -> Result<(), String> {
+        let mut term_queue = VecDeque::new();
+
+        for term in program {
+            term_queue.push_back(self.public_term_to_internal_term(term)?);
+        }
+
+        let load_context_stream = Stream::from_static_string("", &mut self.machine_st.arena);
+        self.load_contexts
+            .push(super::LoadContext::new("terms", load_context_stream));
+
+        let stream = PrebuiltTermStream::new(ListingSource::User);
+        let mut stream = stream;
+        stream.term_queue = term_queue;
+
+        let loader: Loader<'_, PrebuiltBootstrappingLoadState<'_>> = Loader::new(self, stream);
+        loader.load().map_err(|e| format!("{e:?}"))?;
+
+        self.load_contexts.pop();
+
+        Ok(())
     }
 
     pub(crate) fn allocate_stub_choice_point(&mut self) -> Result<(), AllocError> {

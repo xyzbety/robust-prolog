@@ -93,6 +93,21 @@ impl<TS> fmt::Debug for LoadStatePayload<TS> {
     }
 }
 
+pub struct PrebuiltTermStream {
+    pub(super) term_queue: VecDeque<Term>,
+    pub(super) listing_src: ListingSource,
+}
+
+impl PrebuiltTermStream {
+    #[inline]
+    pub(super) fn new(listing_src: ListingSource) -> Self {
+        Self {
+            term_queue: VecDeque::new(),
+            listing_src,
+        }
+    }
+}
+
 impl<TS> LoadStatePayload<TS> {
     pub(super) fn new(code_repo_len: usize, term_stream: TS) -> Self {
         Self {
@@ -108,6 +123,23 @@ impl<TS> LoadStatePayload<TS> {
 }
 
 impl TermStream for LiveTermStream {
+    #[inline]
+    fn next(&mut self, _: &CompositeOpDir) -> Result<Term, CompilationError> {
+        Ok(self.term_queue.pop_front().unwrap())
+    }
+
+    #[inline]
+    fn eof(&mut self) -> Result<bool, CompilationError> {
+        Ok(self.term_queue.is_empty())
+    }
+
+    #[inline]
+    fn listing_src(&self) -> &ListingSource {
+        &self.listing_src
+    }
+}
+
+impl TermStream for PrebuiltTermStream {
     #[inline]
     fn next(&mut self, _: &CompositeOpDir) -> Result<Term, CompilationError> {
         Ok(self.term_queue.pop_front().unwrap())

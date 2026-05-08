@@ -232,6 +232,7 @@ impl Write for UserInput {
 pub struct MachineBuilder {
     pub(crate) streams: StreamConfig,
     pub(crate) toplevel: Cow<'static, str>,
+    pub(crate) load_toplevel: bool,
 }
 
 impl Default for MachineBuilder {
@@ -240,6 +241,7 @@ impl Default for MachineBuilder {
         MachineBuilder {
             streams: Default::default(),
             toplevel: default_toplevel().into(),
+            load_toplevel: true,
         }
     }
 }
@@ -259,6 +261,15 @@ impl MachineBuilder {
     /// Uses the given toplevel in this configuration.
     pub fn with_toplevel(mut self, toplevel: impl Into<Cow<'static, str>>) -> Self {
         self.toplevel = toplevel.into();
+        self
+    }
+
+    /// Skips loading the top-level REPL program.
+    ///
+    /// This is useful for embedded solver use cases that only need the loader
+    /// and core libraries.
+    pub fn without_toplevel(mut self) -> Self {
+        self.load_toplevel = false;
         self
     }
 
@@ -355,7 +366,9 @@ impl MachineBuilder {
         }
 
         wam.load_special_forms();
-        wam.load_top_level(self.toplevel);
+        if self.load_toplevel {
+            wam.load_top_level(self.toplevel);
+        }
         wam.configure_streams();
 
         wam

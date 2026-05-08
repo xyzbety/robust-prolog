@@ -225,6 +225,11 @@ pub type LiveLoadState = LoadStatePayload<LiveTermStream>;
 
 pub struct BootstrappingLoadState<'a>(pub LoadStatePayload<BootstrappingTermStream<'a>>);
 
+pub(crate) struct PrebuiltBootstrappingLoadState<'a>(
+    pub LoadStatePayload<PrebuiltTermStream>,
+    pub &'a mut MachineState,
+);
+
 impl<'a> Deref for BootstrappingLoadState<'a> {
     type Target = LoadStatePayload<BootstrappingTermStream<'a>>;
 
@@ -235,6 +240,22 @@ impl<'a> Deref for BootstrappingLoadState<'a> {
 }
 
 impl<'a> DerefMut for BootstrappingLoadState<'a> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'a> Deref for PrebuiltBootstrappingLoadState<'a> {
+    type Target = LoadStatePayload<PrebuiltTermStream>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> DerefMut for PrebuiltBootstrappingLoadState<'a> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
@@ -401,6 +422,53 @@ impl<'a> LoadState<'a> for BootstrappingLoadState<'a> {
     #[inline(always)]
     fn machine_st(loader: &mut Self::LoaderFieldType) -> &mut MachineState {
         loader.term_stream.parser.lexer.machine_st
+    }
+
+    #[inline(always)]
+    fn err_on_builtin_overwrite(
+        _loader: &Loader<'a, Self>,
+        _key: PredicateKey,
+    ) -> Result<(), SessionError> {
+        Ok(())
+    }
+}
+
+impl<'a> LoadState<'a> for PrebuiltBootstrappingLoadState<'a> {
+    type TS = PrebuiltTermStream;
+    type LoaderFieldType = PrebuiltBootstrappingLoadState<'a>;
+    type Evacuable = CompilationTarget;
+
+    #[inline(always)]
+    fn new(machine_st: &'a mut MachineState, payload: LoadStatePayload<Self::TS>) -> Self::LoaderFieldType {
+        PrebuiltBootstrappingLoadState(payload, machine_st)
+    }
+
+    fn evacuate(mut loader: Loader<'a, Self>) -> Result<Self::Evacuable, SessionError> {
+        if !loader.payload.predicates.is_empty() {
+            loader.compile_and_submit()?;
+        }
+
+        let repo_len = loader.wam_prelude.code.len();
+
+        loader.payload.retraction_info.reset(repo_len);
+        loader.remove_module_op_exports();
+
+        Ok(loader.payload.compilation_target)
+    }
+
+    #[inline(always)]
+    fn should_drop_load_state(_loader: &Loader<'a, Self>) -> bool {
+        true
+    }
+
+    #[inline(always)]
+    fn reset_machine(loader: &mut Loader<'a, Self>) {
+        loader.reset_machine();
+    }
+
+    #[inline(always)]
+    fn machine_st(loader: &mut Self::LoaderFieldType) -> &mut MachineState {
+        loader.1
     }
 
     #[inline(always)]

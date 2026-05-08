@@ -1,11 +1,11 @@
 [package]
-name = "scryer-prolog"
-version = "0.10.0"
+name = "robust-prolog"
+version = "1.0.0"
 authors = ["Mark Thom <markjordanthom@gmail.com>"]
 edition = "2021"
 description = "A modern Prolog implementation written mostly in Rust."
 readme = "README.md"
-repository = "https://github.com/mthom/scryer-prolog"
+repository = "https://github.com/xyzbety/robust-prolog"
 license = "BSD-3-Clause"
 keywords = ["prolog", "prolog-interpreter", "prolog-system"]
 categories = ["command-line-utilities"]
@@ -14,6 +14,7 @@ build = "build/main.rs"
 rust-version = "1.85"
 
 [lib]
+name = "scryer_prolog"
 crate-type = ["cdylib", "rlib"]
 
 [features]
