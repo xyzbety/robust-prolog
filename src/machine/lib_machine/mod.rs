@@ -6,8 +6,8 @@ use std::rc::Rc;
 use crate::atom_table;
 use crate::forms::ListingSource;
 use crate::heap_iter::{stackful_post_order_iter, NonListElider};
-use crate::machine::loader::{Loader, PrebuiltBootstrappingLoadState};
 use crate::machine::heap::AllocError;
+use crate::machine::loader::{Loader, PrebuiltBootstrappingLoadState};
 use crate::machine::machine_indices::VarKey;
 use crate::machine::mock_wam::CompositeOpDir;
 use crate::machine::term_stream::PrebuiltTermStream;
@@ -23,6 +23,8 @@ use crate::types::UntypedArenaPtr;
 use dashu::{Integer, Rational};
 use indexmap::IndexMap;
 use ordered_float::OrderedFloat;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use super::{streams::Stream, Atom, AtomCell, HeapCellValue, HeapCellValueTag, Machine};
 
@@ -47,6 +49,29 @@ pub enum LeafAnswer {
         bindings: BTreeMap<String, Term>,
         //residual_goals: Vec<Term>,
     },
+}
+
+/// A handle that can interrupt a running machine/query.
+#[derive(Clone, Debug)]
+pub struct InterruptHandle {
+    flag: Arc<AtomicBool>,
+}
+
+impl InterruptHandle {
+    /// Requests an interrupt for the associated machine.
+    pub fn interrupt(&self) {
+        self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Clears the interrupt flag for the associated machine.
+    pub fn clear(&self) {
+        self.flag.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Returns whether an interrupt has been requested.
+    pub fn is_interrupted(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl LeafAnswer {
@@ -542,6 +567,13 @@ impl Iterator for QueryState<'_> {
 }
 
 impl Machine {
+    /// Returns a handle that can request interruption of this machine.
+    pub fn interrupt_handle(&self) -> InterruptHandle {
+        InterruptHandle {
+            flag: Arc::clone(&self.machine_st.interrupt_requested),
+        }
+    }
+
     /// Loads a module into the [`Machine`] from a string.
     pub fn load_module_string(&mut self, module_name: &str, program: impl Into<String>) {
         let stream = Stream::from_owned_string(program.into(), &mut self.machine_st.arena);
@@ -564,7 +596,10 @@ impl Machine {
         match term {
             Term::Integer(value) => {
                 if let Ok(fixnum) = Fixnum::build_with_checked(&value) {
-                    Ok(ParseTerm::Literal(Cell::default(), ParseLiteral::Fixnum(fixnum)))
+                    Ok(ParseTerm::Literal(
+                        Cell::default(),
+                        ParseLiteral::Fixnum(fixnum),
+                    ))
                 } else {
                     Ok(ParseTerm::Literal(
                         Cell::default(),
@@ -592,10 +627,7 @@ impl Machine {
             )),
             Term::String(value) => Ok(ParseTerm::CompleteString(Cell::default(), Rc::new(value))),
             Term::List(value) => {
-                let mut tail = ParseTerm::Literal(
-                    Cell::default(),
-                    ParseLiteral::Atom(atom!("[]")),
-                );
+                let mut tail = ParseTerm::Literal(Cell::default(), ParseLiteral::Atom(atom!("[]")));
 
                 for head in value.into_iter().rev() {
                     tail = ParseTerm::Cons(

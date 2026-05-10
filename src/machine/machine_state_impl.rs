@@ -18,6 +18,8 @@ use crate::types::*;
 
 use std::cmp::Ordering;
 use std::convert::TryFrom;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 impl MachineState {
     pub(crate) fn new() -> Self {
@@ -55,6 +57,7 @@ impl MachineState {
             ball: Ball::new(),
             ball_stack: vec![],
             lifted_heap: Heap::new(),
+            interrupt_requested: Arc::new(AtomicBool::new(false)),
             cont_pts: Vec::with_capacity(256),
             cwil: CWIL::new(),
             flags: MachineFlags::default(),

@@ -21,6 +21,7 @@ use indexmap::IndexMap;
 use std::convert::TryFrom;
 use std::fmt;
 use std::ops::{Index, IndexMut, Range};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 pub(crate) type Registers = [HeapCellValue; MAX_ARITY + 1];
@@ -141,6 +142,7 @@ pub struct MachineState {
     pub(super) ball: Ball,
     pub(super) ball_stack: Vec<Ball>, // save current ball before jumping via, e.g., verify_attr interrupt.
     pub(super) lifted_heap: Heap,
+    pub(super) interrupt_requested: Arc<AtomicBool>,
     // locations of cleaners, cut points, the previous scc_block. for setup_call_cleanup/3.
     pub(super) cont_pts: Vec<(HeapCellValue, usize, usize)>,
     pub(super) cwil: CWIL,

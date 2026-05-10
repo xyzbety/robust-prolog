@@ -4798,29 +4798,23 @@ impl Machine {
                         break
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        let interrupted = machine::INTERRUPT.load(std::sync::atomic::Ordering::Relaxed);
+                        let interrupted = machine::INTERRUPT.swap(false, std::sync::atomic::Ordering::Relaxed)
+                            || self
+                                .machine_st
+                                .interrupt_requested
+                                .swap(false, std::sync::atomic::Ordering::Relaxed);
 
-                        match machine::INTERRUPT.compare_exchange(
-                            interrupted,
-                            false,
-                            std::sync::atomic::Ordering::Relaxed,
-                            std::sync::atomic::Ordering::Relaxed,
-                        ) {
-                            Ok(interruption) => {
-                                if interruption {
-                                    self.machine_st.throw_interrupt_exception();
-                                    self.machine_st.backtrack();
-                                    // We have extracted control over the Tokio runtime to the calling context for enabling library use case
-                                    // (see https://github.com/mthom/scryer-prolog/pull/1880)
-                                    // So we only have access to a runtime handle in here and can't shut it down.
-                                    // Since I'm not aware of the consequences of deactivating this new code which came in while PR 1880
-                                    // was not merged, I'm only deactivating it for now.
-                                    //let old_runtime = std::mem::replace(&mut self.runtime, tokio::runtime::Runtime::new().unwrap());
-                                    //old_runtime.shutdown_background();
-                                    break
-                                }
-                            }
-                            Err(_) => unreachable!(),
+                        if interrupted {
+                            self.machine_st.throw_interrupt_exception();
+                            self.machine_st.backtrack();
+                            // We have extracted control over the Tokio runtime to the calling context for enabling library use case
+                            // (see https://github.com/mthom/scryer-prolog/pull/1880)
+                            // So we only have access to a runtime handle in here and can't shut it down.
+                            // Since I'm not aware of the consequences of deactivating this new code which came in while PR 1880
+                            // was not merged, I'm only deactivating it for now.
+                            //let old_runtime = std::mem::replace(&mut self.runtime, tokio::runtime::Runtime::new().unwrap());
+                            //old_runtime.shutdown_background();
+                            break
                         }
                     }
                   Err(_) => {
